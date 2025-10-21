@@ -48,6 +48,8 @@ var externalAPILimiter = rate.NewLimiter(rate.Limit(0.5), 2)
 
 func main() {
 	router := gin.Default()
+
+	router.GET("/", getHealth)
 	router.GET("/me", getMe)
 
 	port := os.Getenv("PORT")
@@ -63,6 +65,10 @@ func main() {
 	}
 }
 
+func getHealth(c *gin.Context) {
+    c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "Gin API Gateway"})
+}
+
 
 func getRandomCatFact() (*CatFactResponse, error) {
 	if !externalAPILimiter.Allow() {
@@ -73,7 +79,7 @@ func getRandomCatFact() (*CatFactResponse, error) {
 
 	client := http.Client{
 		// timeout for external requests
-		Timeout: 5 * time.Second,
+		Timeout: 10 * time.Second,
 	}
 
 	resp, err := client.Get(externalAPIURL)
