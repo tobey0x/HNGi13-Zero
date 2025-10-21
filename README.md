@@ -1,4 +1,4 @@
-# Stage One task for HNGi13
+# Stage Zero task for HNGi13
 
 Zero is a single API endpoint that fetches Cat fact along with my details.
 
