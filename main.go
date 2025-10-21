@@ -6,12 +6,10 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 )
 
 
@@ -27,11 +25,6 @@ type CatFactResponse struct {
 	Length		int		`json:"length"`
 }
 
-type FactCache struct {
-	Fact		*CatFactResponse
-	Timestamp	time.Time
-	Mutex		sync.Mutex
-}
 
 type MyAPIResponse struct {
 	Status			string		`json:"status"`
@@ -48,14 +41,12 @@ var me = User{
 }
 
 const externalAPIURL = "https://catfact.ninja/fact"
-const cacheDuration = 60 * time.Second
+
+var externalAPILimiter = rate.NewLimiter(rate.Limit(0.5), 2)
 
 
 func main() {
 	router := gin.Default()
-	store := cookie.NewStore([]byte("secret"))
-	router.Use(sessions.Sessions("mysession", store))
-
 	router.GET("/me", getMe)
 
 	fmt.Println("Server running on :8080")
@@ -65,35 +56,26 @@ func main() {
 }
 
 
-var factCache = FactCache{}
-
 func getRandomCatFact() (*CatFactResponse, error) {
-
-	factCache.Mutex.Lock()
-	isExpired := time.Since(factCache.Timestamp) > cacheDuration
-
-	if factCache.Fact != nil && !isExpired {
-		factCache.Mutex.Unlock()
-		log.Println("too soon for new fact")
-		return factCache.Fact, nil
+	if !externalAPILimiter.Allow() {
+		log.Println("Rate limit exceeded for external API call. Denying request.")
+		return nil, fmt.Errorf("too many requests to external API")
 	}
 
 
 	client := http.Client{
 		// timeout for external requests
-		Timeout: 10 * time.Second,
+		Timeout: 5 * time.Second,
 	}
 
 	resp, err := client.Get(externalAPIURL)
 	if err != nil {
-		factCache.Mutex.Unlock()
 		log.Printf("Error fetching fact from external API: %v", err)
 		return nil, fmt.Errorf("failed to reach Cat API")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		factCache.Mutex.Unlock()
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		log.Printf("External API returned non-OK: %d, Body: %s", resp.StatusCode, string(bodyBytes))
 		return nil, fmt.Errorf("cat facts reponded with %d", resp.StatusCode)
@@ -101,29 +83,27 @@ func getRandomCatFact() (*CatFactResponse, error) {
 
 	var factResponse CatFactResponse
 	if err := json.NewDecoder(resp.Body).Decode(&factResponse); err != nil {
-		factCache.Mutex.Unlock()
 		log.Printf("Error decoding external API JSON: %v", err)
 		return nil, fmt.Errorf("failed to decode response from Cat service")
 	}
-
-	factCache.Fact = &factResponse
-	factCache.Timestamp = time.Now()
-	factCache.Mutex.Unlock()
 
 	return &factResponse, nil
 }
 
 
 func getMe(c *gin.Context) {
-	// session := sessions.Default(c)
-
-	// if session.Get()
 	factData, err := getRandomCatFact()
 
 	if err != nil {
+		if err.Error() == "too many requests to external API" {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "Service received too many external dependency calls.",
+				"details": err.Error(),
+			})
+		}
 		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"error": "Could not retrieve me",
-			"details": err.Error(),
+			"error": "Service Unavailable",
+			// "details": err.Error(),
 		})
 		return
 	}
@@ -140,4 +120,3 @@ func getMe(c *gin.Context) {
 
 	c.JSON(http.StatusOK, myResponse)
 }
-
