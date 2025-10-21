@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -49,8 +50,15 @@ func main() {
 	router := gin.Default()
 	router.GET("/me", getMe)
 
-	fmt.Println("Server running on :8080")
-	if err := router.Run(":8080"); err != nil {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // Default port for local development
+	}
+
+	addr := fmt.Sprintf(":%s", port)
+
+	fmt.Printf("Server running on %s\n", addr)
+	if err := router.Run(addr); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
 }
