@@ -57,7 +57,7 @@ func main() {
 		port = "8080" // Default port for local development
 	}
 
-	addr := fmt.Sprintf(":%s", port)
+	addr := fmt.Sprintf("0.0.0.0:%s", port)
 
 	fmt.Printf("Server running on %s\n", addr)
 	if err := router.Run(addr); err != nil {
