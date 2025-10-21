@@ -6,8 +6,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 )
 
@@ -24,6 +27,11 @@ type CatFactResponse struct {
 	Length		int		`json:"length"`
 }
 
+type FactCache struct {
+	Fact		*CatFactResponse
+	Timestamp	time.Time
+	Mutex		sync.Mutex
+}
 
 type MyAPIResponse struct {
 	Status			string		`json:"status"`
@@ -40,22 +48,52 @@ var me = User{
 }
 
 const externalAPIURL = "https://catfact.ninja/fact"
+const cacheDuration = 60 * time.Second
 
+
+func main() {
+	router := gin.Default()
+	store := cookie.NewStore([]byte("secret"))
+	router.Use(sessions.Sessions("mysession", store))
+
+	router.GET("/me", getMe)
+
+	fmt.Println("Server running on :8080")
+	if err := router.Run(":8080"); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
+	}
+}
+
+
+var factCache = FactCache{}
 
 func getRandomCatFact() (*CatFactResponse, error) {
+
+	factCache.Mutex.Lock()
+	isExpired := time.Since(factCache.Timestamp) > cacheDuration
+
+	if factCache.Fact != nil && !isExpired {
+		factCache.Mutex.Unlock()
+		log.Println("too soon for new fact")
+		return factCache.Fact, nil
+	}
+
+
 	client := http.Client{
-		// Crucial best practice: Always set a timeout for external requests
+		// timeout for external requests
 		Timeout: 10 * time.Second,
 	}
 
 	resp, err := client.Get(externalAPIURL)
 	if err != nil {
+		factCache.Mutex.Unlock()
 		log.Printf("Error fetching fact from external API: %v", err)
 		return nil, fmt.Errorf("failed to reach Cat API")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		factCache.Mutex.Unlock()
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		log.Printf("External API returned non-OK: %d, Body: %s", resp.StatusCode, string(bodyBytes))
 		return nil, fmt.Errorf("cat facts reponded with %d", resp.StatusCode)
@@ -63,15 +101,23 @@ func getRandomCatFact() (*CatFactResponse, error) {
 
 	var factResponse CatFactResponse
 	if err := json.NewDecoder(resp.Body).Decode(&factResponse); err != nil {
+		factCache.Mutex.Unlock()
 		log.Printf("Error decoding external API JSON: %v", err)
 		return nil, fmt.Errorf("failed to decode response from Cat service")
 	}
+
+	factCache.Fact = &factResponse
+	factCache.Timestamp = time.Now()
+	factCache.Mutex.Unlock()
 
 	return &factResponse, nil
 }
 
 
 func getMe(c *gin.Context) {
+	// session := sessions.Default(c)
+
+	// if session.Get()
 	factData, err := getRandomCatFact()
 
 	if err != nil {
@@ -95,12 +141,3 @@ func getMe(c *gin.Context) {
 	c.JSON(http.StatusOK, myResponse)
 }
 
-func main() {
-	router := gin.Default()
-	router.GET("/me", getMe)
-
-	fmt.Println("Server running on :8080")
-	if err := router.Run(":8080"); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
-	}
-}
